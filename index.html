@@ -1,17 +1,18 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>3D Heart Morph</title>
+    <title>3D Hand Gesture Particles</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
         #ui { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 10; }
-        button { padding: 15px 30px; font-size: 18px; cursor: pointer; border-radius: 8px; border: none; background: #ff0044; color: #fff; font-weight: bold; }
+        button { padding: 15px 30px; font-size: 18px; cursor: pointer; border-radius: 8px; border: none; background: #fff; color: #000; }
         video { display: none; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <button id="startBtn">START HEART SYSTEM</button>
+        <button id="startBtn">Start Camera & Animation</button>
+        <p style="color: white; margin-top: 10px;">Please allow camera access when prompted</p>
     </div>
     <video id="video"></video>
     
@@ -29,65 +30,67 @@
         });
 
         function init() {
+            // --- Three.js Setup ---
             const scene = new THREE.Scene();
             const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
             const renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            const particleCount = 3000;
+            const particleCount = 5000;
             const geometry = new THREE.BufferGeometry();
-            const posArray = new Float32Array(particleCount * 3);
-            const targetArray = new Float32Array(particleCount * 3);
-            const initialArray = new Float32Array(particleCount * 3);
+            const positions = new Float32Array(particleCount * 3);
+            const colors = new Float32Array(particleCount * 3);
 
-            for (let i = 0; i < particleCount; i++) {
-                // Random Cloud (Initial)
-                initialArray[i * 3] = (Math.random() - 0.5) * 12;
-                initialArray[i * 3 + 1] = (Math.random() - 0.5) * 12;
-                initialArray[i * 3 + 2] = (Math.random() - 0.5) * 12;
-                
-                // Heart Math (Target)
-                const t = Math.random() * Math.PI * 2;
-                targetArray[i * 3] = 0.15 * (16 * Math.pow(Math.sin(t), 3));
-                targetArray[i * 3 + 1] = 0.15 * (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t));
-                targetArray[i * 3 + 2] = (Math.random() - 0.5) * 1.5;
-
-                posArray[i * 3] = initialArray[i * 3];
-                posArray[i * 3 + 1] = initialArray[i * 3 + 1];
-                posArray[i * 3 + 2] = initialArray[i * 3 + 2];
+            for (let i = 0; i < particleCount * 3; i++) {
+                positions[i] = (Math.random() - 0.5) * 10;
+                colors[i] = Math.random();
             }
 
-            geometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-            const material = new THREE.PointsMaterial({ size: 0.06, color: 0xff3366, transparent: true, opacity: 0.8 });
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const material = new THREE.PointsMaterial({ size: 0.05, vertexColors: true, transparent: true });
             const points = new THREE.Points(geometry, material);
             scene.add(points);
-            camera.position.z = 6;
+            camera.position.z = 5;
 
-            let isHandPresent = false;
+            // --- MediaPipe Setup ---
             const videoElement = document.getElementById('video');
-            const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
-            
-            hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.6 });
-            hands.onResults((res) => { isHandPresent = res.multiHandLandmarks.length > 0; });
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
+            hands.onResults((results) => {
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    const hand = results.multiHandLandmarks[0];
+                    const index = hand[8];
+                    points.position.x = (index.x - 0.5) * -10;
+                    points.position.y = (index.y - 0.5) * -10;
+
+                    const dx = hand[8].x - hand[4].x;
+                    const dy = hand[8].y - hand[4].y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    const scale = THREE.MathUtils.lerp(points.scale.x, dist * 10, 0.1);
+                    points.scale.set(scale, scale, scale);
+
+                    material.color.setHSL(index.y, 1, 0.5);
+                }
+            });
 
             const cam = new Camera(videoElement, {
                 onFrame: async () => { await hands.send({image: videoElement}); },
                 width: 640, height: 480
             });
-            cam.start();
+            cam.start().catch(err => {
+                alert("Camera Error: " + err);
+                ui.style.display = 'block';
+            });
 
             function animate() {
                 requestAnimationFrame(animate);
-                const positions = geometry.attributes.position.array;
-                
-                for (let i = 0; i < particleCount * 3; i++) {
-                    const target = isHandPresent ? targetArray[i] : initialArray[i];
-                    // Smooth movement (lerp)
-                    positions[i] += (target - positions[i]) * 0.05;
-                }
-
-                geometry.attributes.position.needsUpdate = true;
                 points.rotation.y += 0.005;
                 renderer.render(scene, camera);
             }
